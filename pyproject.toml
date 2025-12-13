@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ci-failure-agent"
+version = "0.1.0"
+description = "Agentic AI system for CI/CD failure analysis and workflow optimization"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "aiohttp>=3.9.0",
+    "httpx>=0.25.0",
+    "openai>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "structlog>=23.0.0",
+    "pyyaml>=6.0",
+    "tenacity>=8.2.0",
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.5.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
