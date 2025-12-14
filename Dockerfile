@@ -19,3 +19,17 @@ RUN echo "GOOGLE_API_KEY=" > .env
 
 # Run the application
 CMD ["python", "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# Copy UI components
+COPY ui/ ./ui/
+
+# Copy tests
+COPY tests/ ./tests/
+
+# Expose port for health checks and API
+EXPOSE 8000 8001
+
+# Health check with predictive actions service support
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:8000/health')"
+
