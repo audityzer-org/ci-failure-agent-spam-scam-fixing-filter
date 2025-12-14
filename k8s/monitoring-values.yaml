@@ -1,0 +1,206 @@
+# Monitoring Stack Values - Prometheus, Grafana, Loki
+# For Phase 3: Advanced Observability Stack
+
+# Prometheus Configuration
+prometheus:
+  enabled: true
+  prometheusSpec:
+    retention: 30d
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 50Gi
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+    externalLabels:
+      cluster: ci-failure-agent
+      environment: production
+
+# Grafana Configuration
+grafana:
+  enabled: true
+  adminPassword: change-me-in-production
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClassName: gp2
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+      - name: Prometheus
+        type: prometheus
+        url: http://prometheus-operated:9090
+        access: proxy
+        isDefault: true
+      - name: Loki
+        type: loki
+        url: http://loki:3100
+        access: proxy
+  
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+      - name: 'default'
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 10
+        allowUiUpdates: true
+        options:
+          path: /var/lib/grafana/dashboards/default
+
+# Prometheus Alertmanager Configuration
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    storage:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 10Gi
+
+# Alert Rules
+prometheusRules:
+  enabled: true
+  groups:
+  - name: ci-failure-agent
+    interval: 30s
+    rules:
+    # High Error Rate
+    - alert: HighErrorRate
+      expr: |
+        (
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+          /
+          sum(rate(http_requests_total[5m]))
+        ) > 0.05
+      for: 5m
+      annotations:
+        summary: "High error rate detected"
+        description: "Error rate is {{ $value | humanizePercentage }}"
+      labels:
+        severity: critical
+    
+    # High Latency
+    - alert: HighLatency
+      expr: |
+        histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m])) > 0.5
+      for: 5m
+      annotations:
+        summary: "High request latency detected"
+        description: "p99 latency is {{ $value }}s"
+      labels:
+        severity: warning
+    
+    # Pod Restart
+    - alert: PodRestartingTooOften
+      expr: |
+        rate(kube_pod_container_status_restarts_total[15m]) > 0
+      for: 5m
+      annotations:
+        summary: "Pod {{ $labels.pod }} restarting too often"
+      labels:
+        severity: warning
+    
+    # High CPU
+    - alert: HighCPUUsage
+      expr: |
+        (100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)) > 80
+      for: 5m
+      annotations:
+        summary: "High CPU usage on {{ $labels.instance }}"
+      labels:
+        severity: warning
+    
+    # High Memory
+    - alert: HighMemoryUsage
+      expr: |
+        ((node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes) > 0.85
+      for: 5m
+      annotations:
+        summary: "High memory usage on {{ $labels.instance }}"
+      labels:
+        severity: warning
+    
+    # Database Connection Pool Exhaustion
+    - alert: DatabaseConnectionPoolExhaustion
+      expr: |
+        (pg_stat_activity_count / pg_settings_max_connections) > 0.9
+      for: 5m
+      annotations:
+        summary: "Database connection pool nearly exhausted"
+      labels:
+        severity: critical
+
+# Loki Configuration
+loki:
+  enabled: true
+  persistence:
+    enabled: true
+    size: 50Gi
+    storageClassName: gp2
+  
+  config:
+    auth_enabled: false
+    ingester:
+      max_chunk_age: 3h
+      max_chunk_idle_period: 3h
+    limits_config:
+      enforce_metric_name: false
+      reject_old_samples: true
+      reject_old_samples_max_age: 168h
+
+# Promtail Configuration (Log Shipping Agent)
+promtail:
+  enabled: true
+  config:
+    clients:
+      - url: http://loki:3100/loki/api/v1/push
+    scrape_configs:
+    - job_name: kubernetes-pods
+      kubernetes_sd_configs:
+      - role: pod
+      relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_node_name]
+        target_label: node_name
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+      - source_labels: [__meta_kubernetes_pod_container_name]
+        target_label: container
+
+# Node Exporter Configuration
+nodeExporter:
+  enabled: true
+
+# Kube State Metrics Configuration  
+kubeStateMetrics:
+  enabled: true
+
+# Default PrometheusRules
+defaultRules:
+  enabled: true
+  rules:
+    alertmanager: true
+    etcd: false
+    kubernetes: true
+    kubeApiserverAvailability: true
+    kubeApiserverSlos: true
+    kubelet: true
+    kubeProxy: true
+    kubePrometheusGeneral: true
+    kubePrometheusNodeRecording: true
