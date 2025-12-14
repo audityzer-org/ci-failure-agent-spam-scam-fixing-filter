@@ -44,8 +44,6 @@ class CIFailureAgent:
         try:
             self.model = genai.GenerativeModel(
                 model_name,
-                system_instruction="You are an expert CI/CD failure analysis agent. "
-                "Analyze GitHub Actions logs, detect failures, and propose fixes."
             )
             logger.info(f"Initialized {model_name} model")
         except Exception as e:
