@@ -1,0 +1,82 @@
+# Phase 2: Cert-Manager Setup for SSL/TLS
+# This manifest installs cert-manager for automatic certificate management
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cert-manager
+---
+# Cert-Manager Helm Chart Installation
+# Pre-requisites: helm repo add jetstack https://charts.jetstack.io
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: install-cert-manager
+  namespace: default
+spec:
+  template:
+    spec:
+      serviceAccountName: eks-admin
+      containers:
+      - name: helm
+        image: alpine/helm:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          helm repo add jetstack https://charts.jetstack.io
+          helm repo update
+          helm install cert-manager jetstack/cert-manager \
+            --namespace cert-manager \
+            --create-namespace \
+            --set installCRDs=true \
+            --set global.leaderElection.namespace=cert-manager
+      restartPolicy: Never
+  backoffLimit: 3
+---
+# ClusterIssuer for Let's Encrypt Production
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: admin@predictive-propositions.dev
+    privateKeySecretRef:
+      name: letsencrypt-prod-key
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+---
+# ClusterIssuer for Let's Encrypt Staging (testing)
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: admin@predictive-propositions.dev
+    privateKeySecretRef:
+      name: letsencrypt-staging-key
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+---
+# ServiceMonitor for Cert-Manager Prometheus Integration
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cert-manager
+  namespace: cert-manager
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cert-manager
+  endpoints:
+  - port: tcp-prometheus-servicemonitor
+    interval: 60s
+    path: /metrics
