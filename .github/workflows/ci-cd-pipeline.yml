@@ -1,0 +1,240 @@
+name: CI/CD Complete Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  CLUSTER_NAME: ci-failure-agent-cluster
+  NAMESPACE: ci-failure-agent
+  DOCKER_REGISTRY: ghcr.io
+  IMAGE_NAME: ci-failure-agent
+
+jobs:
+  test:
+    name: Unit Tests & Code Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov black flake8 bandit mypy
+      
+      - name: Lint with flake8
+        run: |
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+      
+      - name: Format check with black
+        run: black --check .
+      
+      - name: Type checking with mypy
+        run: mypy . --ignore-missing-imports || true
+      
+      - name: Security scan with bandit
+        run: bandit -r . -f json -o bandit-report.json || true
+      
+      - name: Run unit tests
+        run: |
+          pytest tests/ --cov=src --cov-report=xml --cov-report=html --junitxml=junit.xml
+      
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+      
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results
+          path: |
+            junit.xml
+            htmlcov/
+            bandit-report.json
+
+  build:
+    name: Build & Push Docker Image
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ env.DOCKER_REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to EKS
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.CLUSTER_NAME }}
+      
+      - name: Deploy with kubectl
+        run: |
+          kubectl apply -f k8s/ci-failure-agent-deployment.yaml
+          kubectl set image deployment/ci-failure-agent \
+            ci-failure-agent=${{ needs.build.outputs.image-tag }} \
+            -n ${{ env.NAMESPACE }}
+      
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/ci-failure-agent \
+            -n ${{ env.NAMESPACE }} --timeout=5m
+      
+      - name: Verify deployment
+        run: |
+          kubectl get pods -n ${{ env.NAMESPACE }}
+          kubectl get svc -n ${{ env.NAMESPACE }}
+
+  monitoring:
+    name: Setup Monitoring
+    needs: deploy
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.CLUSTER_NAME }}
+      
+      - name: Deploy Prometheus
+        run: |
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo update
+          helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
+            -n monitoring --create-namespace \
+            --set prometheus.prometheusSpec.retention=30d || true
+      
+      - name: Deploy CloudWatch Logs Agent
+        run: |
+          kubectl apply -f - <<EOF
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: cwlogs-config
+            namespace: amazon-cloudwatch
+          data:
+            application-log.conf: |
+              [/var/log/app/application.log]
+              log_group_name = /aws/eks/${{ env.CLUSTER_NAME }}/application
+              log_stream_name = {instance_id}
+              datetime_format = %Y-%m-%d %H:%M:%S
+          EOF
+      
+      - name: Create CloudWatch Log Groups
+        run: |
+          aws logs create-log-group --log-group-name /aws/eks/${{ env.CLUSTER_NAME }}/application || true
+          aws logs create-log-group --log-group-name /aws/eks/${{ env.CLUSTER_NAME }}/system || true
+
+  health-check:
+    name: Health Checks
+    needs: deploy
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.CLUSTER_NAME }}
+      
+      - name: Check pod status
+        run: |
+          kubectl get pods -n ${{ env.NAMESPACE }}
+          kubectl describe pods -n ${{ env.NAMESPACE }}
+      
+      - name: Check service endpoints
+        run: |
+          kubectl get svc -n ${{ env.NAMESPACE }}
+          kubectl get endpoints -n ${{ env.NAMESPACE }}
+      
+      - name: Test application health
+        run: |
+          SERVICE_IP=$(kubectl get svc ci-failure-agent -n ${{ env.NAMESPACE }} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          if [ -z "$SERVICE_IP" ]; then
+            echo "Waiting for LoadBalancer IP..."
+            sleep 30
+            SERVICE_IP=$(kubectl get svc ci-failure-agent -n ${{ env.NAMESPACE }} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          fi
+          echo "Testing endpoint: $SERVICE_IP"
+          curl -f http://$SERVICE_IP/health || true
