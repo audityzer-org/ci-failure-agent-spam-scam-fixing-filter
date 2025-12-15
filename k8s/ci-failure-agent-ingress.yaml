@@ -1,0 +1,140 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ci-failure-agent-ingress
+  namespace: ci-failure-agent
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:YOUR_ACCOUNT_ID:certificate/YOUR_CERT_ID
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS-1-2-2017-01
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  rules:
+  - host: auditorsec.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: ci-failure-agent
+            port:
+              number: 80
+  - host: www.auditorsec.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: ci-failure-agent
+            port:
+              number: 80
+  - host: audityzer.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: ci-failure-agent
+            port:
+              number: 80
+  - host: www.audityzer.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: ci-failure-agent
+            port:
+              number: 80
+  tls:
+  - hosts:
+    - auditorsec.com
+    - www.auditorsec.com
+    secretName: auditorsec-tls
+  - hosts:
+    - audityzer.com
+    - www.audityzer.com
+    secretName: audityzer-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ci-failure-agent
+  namespace: ci-failure-agent
+  labels:
+    app: ci-failure-agent
+spec:
+  type: LoadBalancer
+  selector:
+    app: ci-failure-agent
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8000
+    protocol: TCP
+  - name: https
+    port: 443
+    targetPort: 8000
+    protocol: TCP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: auditorsec-cert
+  namespace: ci-failure-agent
+spec:
+  secretName: auditorsec-tls
+  duration: 2160h
+  renewBefore: 360h
+  commonName: auditorsec.com
+  dnsNames:
+  - auditorsec.com
+  - www.auditorsec.com
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: audityzer-cert
+  namespace: ci-failure-agent
+spec:
+  secretName: audityzer-tls
+  duration: 2160h
+  renewBefore: 360h
+  commonName: audityzer.com
+  dnsNames:
+  - audityzer.com
+  - www.audityzer.com
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: admin@auditorsec.com
+    privateKeySecretRef:
+      name: letsencrypt-prod-key
+    solvers:
+    - http01:
+        ingress:
+          class: alb
+    - dns01:
+        route53:
+          region: us-east-1
