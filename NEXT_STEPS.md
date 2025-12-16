@@ -376,3 +376,123 @@ aws ce create-anomaly-monitor --anomaly-monitor '{
 **Last Updated**: 2024
 **Maintained By**: DevOps Team
 **Next Review Date**: Quarterly
+
+
+## Phase 3.1: Predictive Actions Integration (Current)
+
+### Overview
+Integrate predictive action recommendations into the orchestration pipeline to provide intelligent suggestions for CI failure remediation and incident handling.
+
+### Components Implemented
+
+#### 1. Orchestration Engine (`src/orchestration_engine.py`)
+- **OrchestrationEngine** class: Main orchestrator for alert processing
+- **Alert** dataclass: Structure for CI failures and security incidents
+- **PredictiveAction** dataclass: Recommended actions with confidence scores
+- **ActionStatus** enum: Tracks execution status (pending, accepted, rejected, executed, failed)
+- Async operations with httpx for external service calls
+- Action execution framework for auto_remediation, notify, escalate
+
+#### 2. UI Components (`ui/alert_display.py`)
+- **AlertDisplay**: Renders alert cards with HTML generation
+- **ActionButton**: Interactive buttons for recommended actions
+- **AlertPanel**: Manages alert collection with filtering and statistics
+- Support for alert severity levels and real-time status updates
+- JSON serialization for API responses
+
+#### 3. Unit Tests (`tests/test_orchestration_engine.py`)
+- Comprehensive pytest test suite with async support
+- Fixtures for engine and alert instances
+- Tests for alert lifecycle, action execution, and integration
+- Mock service calls for predictive actions API
+
+#### 4. Docker Configuration
+- Updated Dockerfile with UI and test components
+- Multi-port exposure (8000, 8001)
+- Health checks for orchestration engine
+- Production-ready image configuration
+
+### Integration Points
+
+1. **Predictive Propositions Service Integration**
+   - Endpoint: `POST /api/predictive_actions`
+   - Input: alert_type, description, severity, metadata
+   - Output: array of recommended actions with confidence scores
+
+2. **Alert Handler Integration**
+   - Process CI failures through orchestration engine
+   - Fetch predictive actions for each alert
+   - Present 2-3 action options to users via UI
+   - Log user decisions for ML ranker training
+
+3. **Platform Integration**
+   - Alert handler processes failures
+   - OrchestrationEngine queries predictive service
+   - UI displays recommendations
+   - Action execution tracked and logged
+
+### Deployment Checklist for Phase 3.1
+
+- [x] Orchestration engine module created and tested
+- [x] UI components implemented with action buttons
+- [x] Unit tests written and documented
+- [x] Docker image updated
+- [ ] Deploy to staging environment
+- [ ] Integration testing with predictive service
+- [ ] User acceptance testing (UAT)
+- [ ] Performance baseline established
+- [ ] Documentation updated
+- [ ] Production deployment
+
+### Next Steps (Phase 3.2)
+
+1. **Platform Integration Testing**
+   - Deploy orchestration engine to staging
+   - Test integration with auditorsec-platform-poc
+   - Validate alert handler integration
+   - Verify action execution workflow
+
+2. **ML Ranker Training**
+   - Collect action recommendation data
+   - Log user decisions and outcomes
+   - Train ML model for action ranking
+   - Evaluate model performance
+
+3. **Production Hardening**
+   - Add retry logic for service calls
+   - Implement caching for frequently recommended actions
+   - Add rate limiting for API endpoints
+   - Configure distributed tracing
+
+4. **Performance Optimization**
+   - Profile orchestration engine
+   - Optimize database queries
+   - Implement response caching
+   - Load test with 10,000+ concurrent alerts
+
+### Key Metrics
+
+- Action recommendation accuracy: Target > 85%
+- Average response time: < 500ms
+- Action acceptance rate: Track user decisions
+- System uptime: Target 99.9%
+- ML model accuracy: Track over time
+
+### Resources
+
+- Orchestration Engine: 2 CPU, 1 GB RAM minimum
+- Predictive Service: 1 CPU, 512 MB RAM minimum
+- Database: PostgreSQL 13+
+- Cache: Redis 6+
+- Monitoring: Prometheus + Grafana
+
+### Documentation
+
+- [PREDICTIVE_PROPOSITIONS_INTEGRATION.md](./PREDICTIVE_PROPOSITIONS_INTEGRATION.md)
+- [PREDICTIVE_ACTIONS_INTEGRATION_GUIDE.md](./PREDICTIVE_ACTIONS_INTEGRATION_GUIDE.md)
+- API Documentation: http://api.domain.tech/docs
+- Architecture Diagrams: [ARCHITECTURE_AND_DESIGN_DECISIONS.md](./ARCHITECTURE_AND_DESIGN_DECISIONS.md)
+
+**Status**: ✅ Phase 3.1 Complete - Ready for Integration Testing
+**Last Updated**: December 16, 2025
+**Next Phase**: Phase 3.2 - Integration Testing & ML Ranker Training
