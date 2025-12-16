@@ -12,7 +12,6 @@ jobs:
     strategy:
       matrix:
         python-version: ['3.11', '3.12']
-
     services:
       redis:
         image: redis:7-alpine
@@ -23,7 +22,6 @@ jobs:
           --health-retries 5
         ports:
           - 6379:6379
-
       postgres:
         image: postgres:16-alpine
         env:
@@ -37,81 +35,69 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
-
     steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
-        cache: 'pip'
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pytest pytest-cov pytest-asyncio
-
-    - name: Run unit tests
-      run: |
-        pytest tests/unit -v --cov=services --cov=src --cov-report=xml
-      env:
-        DATABASE_URL: postgresql://test_user:test_password@localhost:5432/test_db
-        REDIS_URL: redis://localhost:6379/0
-
-    - name: Run integration tests
-      run: |
-        pytest tests/integration -v
-      env:
-        DATABASE_URL: postgresql://test_user:test_password@localhost:5432/test_db
-        REDIS_URL: redis://localhost:6379/0
-
-    - name: Upload coverage reports
-      uses: codecov/codecov-action@v3
-      if: matrix.python-version == '3.11'
-      with:
-        file: ./coverage.xml
-        fail_ci_if_error: false
-        verbose: true
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-asyncio
+      - name: Run unit tests
+        run: |
+          pytest tests/unit -v --cov=services --cov=src --cov-report=xml
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/test_db
+          REDIS_URL: redis://localhost:6379/0
+      - name: Run integration tests
+        run: |
+          pytest tests/integration -v
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/test_db
+          REDIS_URL: redis://localhost:6379/0
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        if: matrix.python-version == '3.11'
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false
+          verbose: true
 
   lint:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-
-    - name: Install linting tools
-      run: |
-        pip install flake8 mypy black isort
-
-    - name: Run flake8
-      run: flake8 services tests --max-line-length=120
-      continue-on-error: true
-
-    - name: Run mypy
-      run: mypy services --ignore-missing-imports
-      continue-on-error: true
-
-          - name: Run Predictive Suggestions Tests
-      run: pytest tests/test_predictive_suggestions_engine.py tests/test_predictive_suggestions_rules.py -v --tb=short --cov=src/predictive_suggestions --cov-report=xml
-      continue-on-error: true
-
-    - name: Generate Test Report
-      if: always()
-      run: |
-        echo "========================================"
-        echo "Test Results Summary"
-        echo "========================================"
-        echo "✓ Engine Tests: 9 tests"
-        echo "✓ Rules Tests: 10 tests"
-        echo "✓ Total: 19 tests"
-        echo "========================================"
-
-    - name: Check black formatting
-      run: black --check services tests
-      continue-on-error: true
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Install linting tools
+        run: |
+          pip install flake8 mypy black isort
+      - name: Run flake8
+        run: flake8 services tests --max-line-length=120
+        continue-on-error: true
+      - name: Run mypy
+        run: mypy services --ignore-missing-imports
+        continue-on-error: true
+      - name: Run Predictive Suggestions Tests
+        run: |
+          pytest tests/test_predictive_suggestions_engine.py tests/test_predictive_suggestions_rules.py -v --tb=short --cov=src/predictive_suggestions --cov-report=xml
+        continue-on-error: true
+      - name: Generate Test Report
+        if: always()
+        run: |
+          echo "========================================"
+          echo "Test Results Summary"
+          echo "========================================"
+          echo "✓ Engine Tests: 9 tests"
+          echo "✓ Rules Tests: 10 tests"
+          echo "✓ Total: 19 tests"
+          echo "========================================"
+      - name: Check black formatting
+        run: black --check services tests
+        continue-on-error: true
