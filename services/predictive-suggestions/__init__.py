@@ -1,13 +1,13 @@
 """Predictive Suggestions Package: AI-powered proposal system for CI failures and security incidents."""
 
-from ci_failure_proposer import (
+from .ci_failure_proposer import (
     CIFailureType,
     CIFailureProposal,
     CIFailurePatternMatcher,
     CIFailureProposer,
 )
 
-from spam_scam_proposer import (
+from .spam_scam_proposer import (
     SpamScamType,
     TriageAction,
     SpamScamProposal,
@@ -15,7 +15,7 @@ from spam_scam_proposer import (
     SpamScamProposer,
 )
 
-from logging_pipeline import (
+from .logging_pipeline import (
     ProposalSource,
     ProposalLogEntry,
     ProposalLogger,
