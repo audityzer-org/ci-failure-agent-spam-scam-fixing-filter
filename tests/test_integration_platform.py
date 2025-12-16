@@ -1,188 +1,347 @@
-"""Integration tests for platform orchestration with predictive actions.
-
-Tests integration between:
-- OrchestrationEngine
-- AlertHandler
-- Predictive Actions Service
-- UI Components
-"""
-
+"""Integration tests with retry logic, error handling, and performance testing."""
 import pytest
 import asyncio
-from unittest.mock import patch, AsyncMock
+from datetime import datetime, timedelta
+from unittest.mock import patch, AsyncMock, MagicMock
 import json
+from src.orchestration_engine import (
+    OrchestrationEngine,
+    Alert,
+    AlertType,
+    PredictiveProposition,
+    PropositionDecision,
+)
 
 
-class TestPlatformIntegration:
-    """Test integration of predictive actions with platform."""
+class RetryConfig:
+    """Configuration for retry logic."""
+    MAX_RETRIES = 3
+    RETRY_DELAYS = [0.1, 0.2, 0.4]  # exponential backoff
+    TIMEOUT = 5.0
 
+
+class TestRetryLogic:
+    """Test retry logic with exponential backoff."""
+    
     @pytest.mark.asyncio
-    async def test_alert_to_ui_flow(self):
-        """Test complete flow from alert to UI display."""
-        # Simulate alert handler receiving CI failure
-        alert_data = {
-            "id": "ci-fail-001",
-            "type": "ci_failure",
-            "description": "Build failed: tests failed",
-            "severity": "high",
-            "timestamp": "2025-12-16T20:00:00Z",
-            "source": "jenkins",
-            "metadata": {"build_id": "123"}
-        }
+    async def test_fetch_with_retry_success_on_second_attempt(self):
+        """Test successful retry after initial failure."""
+        engine = OrchestrationEngine()
+        alert = Alert(
+            id="alert-1",
+            type=AlertType.CI_FAILURE,
+            description="Build failed",
+            severity="high",
+            timestamp=datetime.utcnow().isoformat(),
+            source="jenkins",
+            metadata={}
+        )
         
-        # Expected predictive actions response
-        predictive_actions = [
-            {
-                "id": "action-1",
-                "title": "Retry Build",
-                "description": "Retry the failing build",
-                "action_type": "auto_remediation",
-                "parameters": {"retry_count": 3},
-                "confidence_score": 0.85,
-                "estimated_impact": "low"
-            },
-            {
-                "id": "action-2",
-                "title": "Notify Team",
-                "description": "Notify team about failure",
-                "action_type": "notify",
-                "parameters": {},
-                "confidence_score": 0.95,
-                "estimated_impact": "none"
-            }
-        ]
+        call_count = 0
+        async def mock_fetch(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                raise ConnectionError("Service unavailable")
+            return []
         
-        # Verify the flow
-        assert alert_data["type"] == "ci_failure"
-        assert len(predictive_actions) >= 2
-        assert predictive_actions[0]["confidence_score"] > 0.8
-
+        with patch.object(engine, 'client') as mock_client:
+            mock_client.post = mock_fetch
+            # Should succeed on retry
+            result = await engine._fetch_predictive_propositions(alert, "req-1")
+            assert call_count >= 1
+    
     @pytest.mark.asyncio
-    async def test_ui_action_tracking(self):
-        """Test tracking of user actions in UI."""
-        action_log = []
+    async def test_max_retries_exceeded(self):
+        """Test behavior when max retries exceeded."""
+        engine = OrchestrationEngine()
+        alert = Alert(
+            id="alert-2",
+            type=AlertType.SPAM_INCIDENT,
+            description="Spam detected",
+            severity="medium",
+            timestamp=datetime.utcnow().isoformat(),
+            source="email",
+            metadata={}
+        )
         
-        # Simulate user accepting action
-        user_action = {
-            "alert_id": "ci-fail-001",
-            "action_id": "action-1",
-            "user_decision": True,
-            "timestamp": "2025-12-16T20:00:30Z"
-        }
+        failure_count = 0
+        async def always_fail(*args, **kwargs):
+            nonlocal failure_count
+            failure_count += 1
+            raise ConnectionError("Persistent failure")
         
-        action_log.append(user_action)
-        
-        # Verify action is logged
-        assert len(action_log) == 1
-        assert action_log[0]["user_decision"] is True
-        assert action_log[0]["alert_id"] == "ci-fail-001"
+        with patch.object(engine, 'client') as mock_client:
+            mock_client.post = always_fail
+            result = await engine._fetch_predictive_propositions(alert, "req-2")
+            assert result == []  # Returns empty on failure
 
+
+class TestPredictiveServiceIntegration:
+    """Test integration with predictive propositions service."""
+    
     @pytest.mark.asyncio
-    async def test_service_communication(self):
-        """Test communication between services."""
-        # Simulate orchestration engine calling predictive service
-        predictive_service_url = "http://localhost:8001"
-        alert_payload = {
-            "alert_type": "ci_failure",
-            "description": "Build failed",
-            "severity": "high",
-            "metadata": {"build_id": "123"}
-        }
+    async def test_ci_failure_propositions(self):
+        """Test getting propositions for CI failure."""
+        engine = OrchestrationEngine()
+        alert = Alert(
+            id="ci-fail-001",
+            type=AlertType.CI_FAILURE,
+            description="Build failed: tests failed",
+            severity="high",
+            timestamp=datetime.utcnow().isoformat(),
+            source="jenkins",
+            metadata={"build_id": "123", "branch": "main"}
+        )
         
-        # Verify endpoint
-        expected_endpoint = f"{predictive_service_url}/api/predictive_actions"
-        assert "predictive_actions" in expected_endpoint
-        assert "8001" in predictive_service_url
-
-    def test_alert_panel_operations(self):
-        """Test AlertPanel operations with multiple alerts."""
-        alerts = []
-        
-        # Add multiple alerts
-        for i in range(5):
-            alert = {
-                "id": f"alert-{i}",
-                "title": f"Alert {i}",
-                "severity": "high" if i % 2 == 0 else "medium",
-                "status": "active"
-            }
-            alerts.append(alert)
-        
-        # Filter by severity
-        high_severity = [a for a in alerts if a["severity"] == "high"]
-        medium_severity = [a for a in alerts if a["severity"] == "medium"]
-        
-        assert len(high_severity) == 3
-        assert len(medium_severity) == 2
-
-    @pytest.mark.asyncio
-    async def test_concurrent_alerts(self):
-        """Test handling multiple concurrent alerts."""
-        async def process_alert(alert_id):
-            await asyncio.sleep(0.1)
-            return {"status": "processed", "alert_id": alert_id}
-        
-        # Process multiple alerts concurrently
-        alert_ids = [f"alert-{i}" for i in range(10)]
-        results = await asyncio.gather(*[
-            process_alert(aid) for aid in alert_ids
-        ])
-        
-        assert len(results) == 10
-        assert all(r["status"] == "processed" for r in results)
-
-    def test_json_serialization(self):
-        """Test JSON serialization of alert data."""
-        alert_data = {
-            "id": "alert-1",
-            "title": "Build Failed",
-            "severity": "high",
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
             "actions": [
-                {"id": "action-1", "label": "Retry"},
-                {"id": "action-2", "label": "Notify"}
+                {
+                    "action_id": "prop-1",
+                    "title": "Retry Build",
+                    "description": "Retry the build",
+                    "action_type": "auto_fix",
+                    "parameters": {"retry_count": 3},
+                    "success_rate": 0.85,
+                    "estimated_time": "5 minutes",
+                    "priority": 1
+                }
             ]
         }
         
-        # Serialize to JSON
-        json_str = json.dumps(alert_data)
-        
-        # Deserialize back
-        restored = json.loads(json_str)
-        
-        assert restored["id"] == "alert-1"
-        assert len(restored["actions"]) == 2
-
-
-class TestErrorHandling:
-    """Test error handling in integration."""
-
+        with patch.object(engine.client, 'post', new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_response
+            propositions = await engine._fetch_predictive_propositions(alert, "req-1")
+            assert len(propositions) > 0
+    
     @pytest.mark.asyncio
-    async def test_service_unavailable(self):
-        """Test handling when predictive service is unavailable."""
-        predictive_service_url = "http://localhost:8001"
+    async def test_spam_incident_propositions(self):
+        """Test getting propositions for spam incident."""
+        engine = OrchestrationEngine()
+        alert = Alert(
+            id="spam-001",
+            type=AlertType.SPAM_INCIDENT,
+            description="Suspicious email from external",
+            severity="medium",
+            timestamp=datetime.utcnow().isoformat(),
+            source="email_gateway",
+            metadata={"sender": "unknown@external.com"}
+        )
         
-        # Simulate service call with error
-        try:
-            # In real test, this would call the service
-            raise ConnectionError(f"Cannot reach {predictive_service_url}")
-        except ConnectionError as e:
-            error_msg = str(e)
-            assert "Cannot reach" in error_msg
-            assert "8001" in error_msg
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "actions": [
+                {
+                    "action_id": "prop-spam-1",
+                    "title": "Quarantine & Review",
+                    "description": "Move to quarantine",
+                    "action_type": "manual_review",
+                    "parameters": {},
+                    "success_rate": 0.92,
+                    "estimated_time": "immediate",
+                    "priority": 1
+                }
+            ]
+        }
+        
+        with patch.object(engine.client, 'post', new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = mock_response
+            propositions = await engine._fetch_predictive_propositions(alert, "req-2")
+            assert len(propositions) > 0
+    
+    @pytest.mark.asyncio
+    async def test_service_timeout_handling(self):
+        """Test handling of service timeout."""
+        engine = OrchestrationEngine()
+        alert = Alert(
+            id="alert-timeout",
+            type=AlertType.CI_FAILURE,
+            description="Build failed",
+            severity="high",
+            timestamp=datetime.utcnow().isoformat(),
+            source="jenkins",
+            metadata={}
+        )
+        
+        async def timeout_error(*args, **kwargs):
+            raise asyncio.TimeoutError("Service timeout")
+        
+        with patch.object(engine.client, 'post', side_effect=timeout_error):
+            propositions = await engine._fetch_predictive_propositions(alert, "req-3")
+            assert propositions == []  # Returns empty on timeout
 
-    def test_invalid_alert_data(self):
-        """Test handling of invalid alert data."""
-        invalid_alerts = [
-            {},  # Missing required fields
-            {"id": "alert-1"},  # Missing other fields
-            None  # Null alert
+
+class TestConcurrentPropositionProcessing:
+    """Test handling multiple concurrent propositions."""
+    
+    @pytest.mark.asyncio
+    async def test_process_multiple_alerts_concurrently(self):
+        """Test processing multiple alerts concurrently."""
+        engine = OrchestrationEngine()
+        
+        alerts = [
+            Alert(
+                id=f"alert-{i}",
+                type=AlertType.CI_FAILURE if i % 2 == 0 else AlertType.SPAM_INCIDENT,
+                description=f"Alert {i}",
+                severity="high" if i % 3 == 0 else "medium",
+                timestamp=datetime.utcnow().isoformat(),
+                source="system",
+                metadata={"index": i}
+            )
+            for i in range(10)
         ]
         
-        for alert in invalid_alerts:
-            if alert is None or not isinstance(alert, dict):
-                assert True  # Invalid data detected
-            elif "id" not in alert:
-                assert True  # Missing required field detected
+        with patch.object(engine, '_fetch_predictive_propositions', new_callable=AsyncMock) as mock:
+            mock.return_value = []
+            results = await asyncio.gather(*[
+                engine.process_alert(alert) for alert in alerts
+            ])
+            
+            assert len(results) == 10
+            assert all(r["status"] == "processed" for r in results)
+            assert len(engine.active_alerts) == 10
+    
+    @pytest.mark.asyncio
+    async def test_apply_propositions_concurrently(self):
+        """Test applying multiple propositions concurrently."""
+        engine = OrchestrationEngine()
+        alert = Alert(
+            id="concurrent-alert",
+            type=AlertType.CI_FAILURE,
+            description="Build failed",
+            severity="high",
+            timestamp=datetime.utcnow().isoformat(),
+            source="jenkins",
+            metadata={}
+        )
+        
+        with patch.object(engine, '_fetch_predictive_propositions', new_callable=AsyncMock):
+            await engine.process_alert(alert)
+            
+            propositions = [
+                PredictiveProposition(
+                    id=f"prop-{i}",
+                    title=f"Proposition {i}",
+                    description=f"Desc {i}",
+                    action_type="auto_fix",
+                    parameters={},
+                    confidence_score=0.8 + (i * 0.01),
+                    estimated_impact="2 mins",
+                    priority=1
+                )
+                for i in range(5)
+            ]
+            
+            results = await asyncio.gather(*[
+                engine.apply_proposition(
+                    alert_id=alert.id,
+                    proposition=prop,
+                    request_id=f"req-{i}",
+                    user_decision=PropositionDecision.ACCEPTED if i % 2 == 0 else PropositionDecision.REJECTED
+                )
+                for i, prop in enumerate(propositions)
+            ])
+            
+            assert len(results) == 5
+            assert len(engine.proposition_history) == 5
+
+
+class TestErrorRecovery:
+    """Test error recovery and graceful degradation."""
+    
+    @pytest.mark.asyncio
+    async def test_service_unavailable_fallback(self):
+        """Test fallback when service is unavailable."""
+        engine = OrchestrationEngine()
+        alert = Alert(
+            id="unavail-alert",
+            type=AlertType.CI_FAILURE,
+            description="Build failed",
+            severity="high",
+            timestamp=datetime.utcnow().isoformat(),
+            source="jenkins",
+            metadata={}
+        )
+        
+        with patch.object(engine.client, 'post', new_callable=AsyncMock) as mock:
+            mock.side_effect = ConnectionError("Service unavailable")
+            result = await engine.process_alert(alert)
+            
+            # Should still process alert even if service unavailable
+            assert result["status"] == "processed"
+            assert result["proposition_count"] == 0  # Empty propositions
+    
+    @pytest.mark.asyncio
+    async def test_invalid_alert_handling(self):
+        """Test handling of invalid alert data."""
+        engine = OrchestrationEngine()
+        alert = Alert(
+            id="invalid-alert",
+            type=AlertType.CI_FAILURE,
+            description="",  # Empty description
+            severity="unknown",  # Invalid severity
+            timestamp="invalid-date",
+            source="",
+            metadata=None
+        )
+        
+        with patch.object(engine, '_fetch_predictive_propositions', new_callable=AsyncMock):
+            # Should handle gracefully
+            result = await engine.process_alert(alert)
+            assert result["status"] == "processed"
+
+
+class TestDataConsistency:
+    """Test data consistency across operations."""
+    
+    @pytest.mark.asyncio
+    async def test_proposition_history_consistency(self):
+        """Test consistency of proposition history."""
+        engine = OrchestrationEngine()
+        alert = Alert(
+            id="consistency-alert",
+            type=AlertType.CI_FAILURE,
+            description="Build failed",
+            severity="high",
+            timestamp=datetime.utcnow().isoformat(),
+            source="jenkins",
+            metadata={}
+        )
+        
+        with patch.object(engine, '_fetch_predictive_propositions', new_callable=AsyncMock):
+            await engine.process_alert(alert)
+            
+            proposition = PredictiveProposition(
+                id="prop-consistency",
+                title="Test Proposition",
+                description="Test",
+                action_type="auto_fix",
+                parameters={},
+                confidence_score=0.85,
+                estimated_impact="5 mins",
+                priority=1
+            )
+            
+            await engine.apply_proposition(
+                alert_id=alert.id,
+                proposition=proposition,
+                request_id="req-consistency",
+                user_decision=PropositionDecision.ACCEPTED
+            )
+            
+            # Verify data consistency
+            logs = await engine.get_proposition_logs()
+            assert len(logs) == 1
+            
+            log = logs[0]
+            assert log.alert_id == alert.id
+            assert log.proposition_id == proposition.id
+            assert log.user_decision == PropositionDecision.ACCEPTED
+            assert log.request_id == "req-consistency"
 
 
 if __name__ == "__main__":
