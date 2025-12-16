@@ -76,6 +76,91 @@ class PropositionLog:
     feedback: Optional[str] = None
     outcome: Optional[str] = None  # 'successful', 'failed', 'partial'
 
+# ================ Error Handling & Resilience ================
+
+class RetryPolicy:
+    """Retry policy for transient failures."""
+    
+    def __init__(
+        self,
+        max_retries: int = 3,
+        initial_delay: float = 1.0,
+        max_delay: float = 60.0,
+        exponential_base: float = 2.0,
+        jitter: bool = True
+    ):
+        self.max_retries = max_retries
+        self.initial_delay = initial_delay
+        self.max_delay = max_delay
+        self.exponential_base = exponential_base
+        self.jitter = jitter
+    
+    def get_delay(self, attempt: int) -> float:
+        """Calculate delay for given attempt number."""
+        import random
+        delay = min(
+            self.initial_delay * (self.exponential_base ** attempt),
+            self.max_delay
+        )
+        if self.jitter:
+            delay *= random.uniform(0.8, 1.2)
+        return delay
+
+
+class CircuitBreaker:
+    """Circuit breaker pattern for external service calls."""
+    
+    def __init__(
+        self,
+        failure_threshold: int = 5,
+        success_threshold: int = 2,
+        timeout: float = 60.0
+    ):
+        self.failure_threshold = failure_threshold
+        self.success_threshold = success_threshold
+        self.timeout = timeout
+        self.failure_count = 0
+        self.success_count = 0
+        self.last_failure_time = None
+        self.state = "closed"  # closed, open, half_open
+    
+    def record_success(self):
+        """Record successful call."""
+        if self.state == "half_open":
+            self.success_count += 1
+            if self.success_count >= self.success_threshold:
+                self.state = "closed"
+                self.failure_count = 0
+                self.success_count = 0
+                logger.info("CircuitBreaker: Closed after recovery")
+    
+    def record_failure(self):
+        """Record failed call."""
+        import time
+        self.failure_count += 1
+        self.last_failure_time = time.time()
+        if self.failure_count >= self.failure_threshold:
+            self.state = "open"
+            logger.warning(f"CircuitBreaker: Opened after {self.failure_count} failures")
+    
+    def can_attempt(self) -> bool:
+        """Check if call should be attempted."""
+        import time
+        if self.state == "closed":
+            return True
+        elif self.state == "open":
+            if time.time() - self.last_failure_time > self.timeout:
+                self.state = "half_open"
+                self.success_count = 0
+                logger.info("CircuitBreaker: Transitioning to half-open")
+                return True
+            return False
+        else:  # half_open
+            return True
+
+
+
+
 class OrchestrationEngine:
     """Main orchestration engine for handling alerts and executing remediation."""
     
@@ -112,8 +197,7 @@ class OrchestrationEngine:
         request_id = str(uuid.uuid4())
         
         # Fetch predictive propositions based on alert type
-        propositions = await self._fetch_predictive_propositions(alert, request_id)
-        
+        propositions = await self._fetch_predictive_propositions_with_retry(alert, request_id)        
         result = {
             "request_id": request_id,
             "alert_id": alert.id,
@@ -174,6 +258,83 @@ class OrchestrationEngine:
         except Exception as e:
             logger.error(f"Error fetching predictive propositions: {e}")
             return []
+
+        async def _fetch_predictive_propositions_with_retry(
+        self,
+        alert: Alert,
+        request_id: str,
+        retry_policy: RetryPolicy = None,
+        circuit_breaker: CircuitBreaker = None
+    ) -> List[PredictiveProposition]:
+        """Fetch propositions with retry logic and circuit breaker pattern.
+        
+        Args:
+            alert: The alert to get propositions for
+            request_id: Request ID for tracking
+            retry_policy: Retry policy for exponential backoff (optional)
+            circuit_breaker: Circuit breaker for fault tolerance (optional)
+        
+        Returns:
+            List of recommended propositions with graceful degradation
+        """
+        import time
+        import asyncio
+        
+        if retry_policy is None:
+            retry_policy = RetryPolicy(
+                max_retries=3,
+                initial_delay=1.0,
+                exponential_base=2.0,
+                jitter=True
+            )
+        
+        if circuit_breaker is None:
+            circuit_breaker = CircuitBreaker(
+                failure_threshold=5,
+                success_threshold=2,
+                timeout=60.0
+            )
+        
+        # Check circuit breaker state before attempting
+        if not circuit_breaker.can_attempt():
+            logger.warning("CircuitBreaker: Service unavailable, returning empty propositions")
+            return []
+        
+        # Retry loop with exponential backoff
+        last_exception = None
+        for attempt in range(retry_policy.max_retries):
+            try:
+                logger.info(f"Fetching propositions (attempt {attempt + 1}/{retry_policy.max_retries})")
+                
+                # Call the base fetch method
+                propositions = await self._fetch_predictive_propositions(alert, request_id)
+                
+                # Record success
+                circuit_breaker.record_success()
+                logger.info(f"Successfully fetched {len(propositions)} propositions")
+                return propositions
+                
+            except asyncio.TimeoutError:
+                last_exception = asyncio.TimeoutError("Request timeout")
+                logger.warning(f"Timeout on attempt {attempt + 1}, retrying...")
+                circuit_breaker.record_failure()
+                
+            except Exception as e:
+                last_exception = e
+                logger.warning(f"Error on attempt {attempt + 1}: {str(e)}")
+                circuit_breaker.record_failure()
+            
+            # Calculate delay for next retry (but not after last attempt)
+            if attempt < retry_policy.max_retries - 1:
+                delay = retry_policy.get_delay(attempt)
+                logger.info(f"Waiting {delay:.2f}s before retry...")
+                await asyncio.sleep(delay)
+        
+        # All retries exhausted - log and return graceful degradation
+        logger.error(f"Failed to fetch propositions after {retry_policy.max_retries} attempts: {last_exception}")
+        return []  # Graceful degradation: return empty list
+
+
     
     async def apply_proposition(
         self,
