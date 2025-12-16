@@ -1,21 +1,23 @@
-"""Advanced Orchestration Engine with Predictive Actions Integration.
+"""Advanced Orchestration Engine with Predictive Propositions Integration.
 
 This module provides a comprehensive orchestration engine that:
 - Manages CI failure detection and remediation workflows
-- Integrates with predictive actions service for suggested solutions
+- Handles spam/scam incident detection and response
+- Integrates with predictive propositions service for suggested solutions
 - Implements state machine-based workflow orchestration
 - Handles parallel task execution with dependency tracking
+- Tracks user decisions on propositions for ML model training
 """
-
 import asyncio
 import logging
 from typing import Dict, List, Optional, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 import httpx
+from datetime import datetime
+import uuid
 
 logger = logging.getLogger(__name__)
-
 
 class AlertType(Enum):
     """Alert types for CI failures and security incidents."""
@@ -23,7 +25,6 @@ class AlertType(Enum):
     SPAM_INCIDENT = "spam_incident"
     SCAM_INCIDENT = "scam_incident"
     SECURITY_ALERT = "security_alert"
-
 
 class ActionStatus(Enum):
     """Status of recommended actions."""
@@ -33,6 +34,12 @@ class ActionStatus(Enum):
     EXECUTED = "executed"
     FAILED = "failed"
 
+class PropositionDecision(Enum):
+    """User decision on a proposition."""
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    IGNORED = "ignored"
+    PENDING = "pending"
 
 @dataclass
 class Alert:
@@ -45,10 +52,9 @@ class Alert:
     source: str
     metadata: Dict[str, Any]
 
-
 @dataclass
-class PredictiveAction:
-    """Predictive action recommendation."""
+class PredictiveProposition:
+    """Predictive proposition recommendation."""
     id: str
     title: str
     description: str
@@ -56,11 +62,23 @@ class PredictiveAction:
     parameters: Dict[str, Any]
     confidence_score: float
     estimated_impact: str
+    priority: int = 1  # 1=highest, 3=lowest
 
+@dataclass
+class PropositionLog:
+    """Log entry for proposition tracking and ML training."""
+    request_id: str
+    alert_id: str
+    proposition_id: str
+    presented_at: str
+    user_decision: PropositionDecision
+    decision_timestamp: Optional[str] = None
+    feedback: Optional[str] = None
+    outcome: Optional[str] = None  # 'successful', 'failed', 'partial'
 
 class OrchestrationEngine:
     """Main orchestration engine for handling alerts and executing remediation."""
-
+    
     def __init__(
         self,
         predictive_service_url: str = "http://localhost:8001",
@@ -69,17 +87,18 @@ class OrchestrationEngine:
         """Initialize the orchestration engine.
         
         Args:
-            predictive_service_url: URL of the predictive actions service
+            predictive_service_url: URL of the predictive propositions service
             platform_webhook_url: Webhook URL for platform integration
         """
         self.predictive_service_url = predictive_service_url
         self.platform_webhook_url = platform_webhook_url
         self.active_alerts: Dict[str, Alert] = {}
+        self.proposition_history: List[PropositionLog] = []
         self.action_history: List[Dict[str, Any]] = []
         self.client = httpx.AsyncClient(timeout=30.0)
-
+    
     async def process_alert(self, alert: Alert) -> Dict[str, Any]:
-        """Process an incoming alert and fetch predictive actions.
+        """Process an incoming alert and fetch predictive propositions.
         
         Args:
             alert: The alert to process
@@ -90,36 +109,42 @@ class OrchestrationEngine:
         logger.info(f"Processing alert: {alert.id} of type {alert.type.value}")
         
         self.active_alerts[alert.id] = alert
+        request_id = str(uuid.uuid4())
         
-        # Fetch predictive actions
-        actions = await self._fetch_predictive_actions(alert)
+        # Fetch predictive propositions based on alert type
+        propositions = await self._fetch_predictive_propositions(alert, request_id)
         
         result = {
+            "request_id": request_id,
             "alert_id": alert.id,
             "alert_type": alert.type.value,
             "status": "processed",
-            "recommended_actions": actions,
-            "action_count": len(actions)
+            "propositions": propositions,
+            "proposition_count": len(propositions),
+            "timestamp": datetime.utcnow().isoformat()
         }
         
-        logger.info(f"Alert {alert.id} processed with {len(actions)} recommendations")
+        logger.info(f"Alert {alert.id} processed with {len(propositions)} propositions")
         return result
-
-    async def _fetch_predictive_actions(self, alert: Alert) -> List[PredictiveAction]:
-        """Fetch predictive actions for an alert.
+    
+    async def _fetch_predictive_propositions(
+        self, alert: Alert, request_id: str
+    ) -> List[PredictiveProposition]:
+        """Fetch predictive propositions for an alert.
         
         Args:
-            alert: The alert to get actions for
+            alert: The alert to get propositions for
+            request_id: Request ID for tracking
             
         Returns:
-            List of recommended actions
+            List of recommended propositions
         """
         try:
             payload = {
-                "alert_type": alert.type.value,
-                "description": alert.description,
+                "failure_description": alert.description,
+                "failure_type": alert.type.value,
                 "severity": alert.severity,
-                "metadata": alert.metadata
+                "context": alert.metadata
             }
             
             response = await self.client.post(
@@ -129,90 +154,114 @@ class OrchestrationEngine:
             
             if response.status_code == 200:
                 data = response.json()
-                actions = [
-                    PredictiveAction(**action)
+                propositions = [
+                    PredictiveProposition(
+                        id=action.get('action_id', str(uuid.uuid4())),
+                        title=action.get('title', ''),
+                        description=action.get('description', ''),
+                        action_type=action.get('action_type', ''),
+                        parameters=action.get('parameters', {}),
+                        confidence_score=action.get('success_rate', 0.5),
+                        estimated_impact=action.get('estimated_time', 'unknown'),
+                        priority=action.get('priority', 1)
+                    )
                     for action in data.get("actions", [])
                 ]
-                return actions
+                return propositions
             else:
-                logger.warning(f"Failed to fetch actions: {response.status_code}")
+                logger.warning(f"Failed to fetch propositions: {response.status_code}")
                 return []
         except Exception as e:
-            logger.error(f"Error fetching predictive actions: {e}")
+            logger.error(f"Error fetching predictive propositions: {e}")
             return []
-
-    async def execute_action(
+    
+    async def apply_proposition(
         self,
         alert_id: str,
-        action: PredictiveAction,
-        user_decision: bool = True
+        proposition: PredictiveProposition,
+        request_id: str,
+        user_decision: PropositionDecision = PropositionDecision.PENDING
     ) -> Dict[str, Any]:
-        """Execute a recommended action.
+        """Apply a recommended proposition.
         
         Args:
             alert_id: ID of the associated alert
-            action: The action to execute
-            user_decision: Whether user approved the action
+            proposition: The proposition to apply
+            request_id: Request ID for tracking
+            user_decision: User's decision on the proposition
             
         Returns:
-            Execution result
+            Application result
         """
         if alert_id not in self.active_alerts:
             return {"status": "error", "message": f"Alert {alert_id} not found"}
         
+        # Log the proposition for ML training
+        log_entry = PropositionLog(
+            request_id=request_id,
+            alert_id=alert_id,
+            proposition_id=proposition.id,
+            presented_at=datetime.utcnow().isoformat(),
+            user_decision=user_decision,
+            decision_timestamp=datetime.utcnow().isoformat() if user_decision != PropositionDecision.PENDING else None
+        )
+        self.proposition_history.append(log_entry)
+        
         execution_record = {
             "alert_id": alert_id,
-            "action_id": action.id,
-            "action_title": action.title,
-            "user_approved": user_decision,
-            "status": ActionStatus.EXECUTED.value if user_decision else ActionStatus.REJECTED.value,
-            "timestamp": "timestamp_here"
+            "proposition_id": proposition.id,
+            "proposition_title": proposition.title,
+            "user_decision": user_decision.value,
+            "status": ActionStatus.EXECUTED.value if user_decision == PropositionDecision.ACCEPTED else ActionStatus.REJECTED.value,
+            "timestamp": datetime.utcnow().isoformat()
         }
         
         self.action_history.append(execution_record)
         
-        if user_decision:
-            # Execute the action based on type
-            result = await self._execute_by_type(action)
+        if user_decision == PropositionDecision.ACCEPTED:
+            # Execute the proposition based on type
+            result = await self._execute_by_type(proposition)
             execution_record["execution_result"] = result
-            logger.info(f"Action {action.id} executed: {result}")
+            logger.info(f"Proposition {proposition.id} executed: {result}")
         else:
-            logger.info(f"Action {action.id} rejected by user")
+            logger.info(f"Proposition {proposition.id} - User decision: {user_decision.value}")
         
         return execution_record
-
-    async def _execute_by_type(self, action: PredictiveAction) -> Dict[str, Any]:
-        """Execute action based on its type.
+    
+    async def _execute_by_type(self, proposition: PredictiveProposition) -> Dict[str, Any]:
+        """Execute proposition based on its type.
         
         Args:
-            action: The action to execute
+            proposition: The proposition to execute
             
         Returns:
             Execution result
         """
-        action_type = action.action_type
+        action_type = proposition.action_type
         
-        if action_type == "auto_remediation":
-            return await self._execute_remediation(action)
-        elif action_type == "notify":
-            return await self._execute_notification(action)
+        if action_type == "auto_fix":
+            return await self._execute_auto_fix(proposition)
+        elif action_type == "manual_review":
+            return await self._execute_review(proposition)
         elif action_type == "escalate":
-            return await self._execute_escalation(action)
+            return await self._execute_escalation(proposition)
+        elif action_type == "ignore":
+            return {"status": "success", "type": "ignore", "details": "Issue marked as ignored"}
         else:
             return {"status": "unknown", "message": f"Unknown action type: {action_type}"}
-
-    async def _execute_remediation(self, action: PredictiveAction) -> Dict[str, Any]:
-        """Execute automatic remediation."""
-        return {"status": "success", "type": "remediation", "details": "Remediation executed"}
-
-    async def _execute_notification(self, action: PredictiveAction) -> Dict[str, Any]:
-        """Send notification."""
-        return {"status": "success", "type": "notification", "details": "Notification sent"}
-
-    async def _execute_escalation(self, action: PredictiveAction) -> Dict[str, Any]:
+    
+    async def _execute_auto_fix(self, proposition: PredictiveProposition) -> Dict[str, Any]:
+        """Execute automatic fix."""
+        return {"status": "success", "type": "auto_fix", "details": "Auto-fix executed"}
+    
+    async def _execute_review(self, proposition: PredictiveProposition) -> Dict[str, Any]:
+        """Prepare for manual review."""
+        return {"status": "success", "type": "manual_review", "details": "Queued for review"}
+    
+    async def _execute_escalation(self, proposition: PredictiveProposition) -> Dict[str, Any]:
         """Escalate to higher level."""
         return {"status": "success", "type": "escalation", "details": "Escalated"}
-
+    
     async def close_alert(self, alert_id: str) -> Dict[str, Any]:
         """Close an alert and clean up resources.
         
@@ -227,7 +276,7 @@ class OrchestrationEngine:
             logger.info(f"Alert {alert_id} closed")
             return {"status": "closed", "alert_id": alert_id}
         return {"status": "error", "message": f"Alert {alert_id} not found"}
-
+    
     async def get_alert_summary(self) -> Dict[str, Any]:
         """Get summary of all active alerts."""
         return {
@@ -236,9 +285,26 @@ class OrchestrationEngine:
                 t.value: sum(1 for a in self.active_alerts.values() if a.type == t)
                 for t in AlertType
             },
+            "total_propositions_tracked": len(self.proposition_history),
             "total_actions_executed": len(self.action_history)
         }
-
+    
+    async def get_proposition_logs(
+        self, alert_id: Optional[str] = None, limit: int = 100
+    ) -> List[PropositionLog]:
+        """Get proposition logs for ML model training.
+        
+        Args:
+            alert_id: Optional alert ID to filter logs
+            limit: Maximum number of logs to return
+            
+        Returns:
+            List of proposition logs
+        """
+        if alert_id:
+            return [log for log in self.proposition_history if log.alert_id == alert_id][-limit:]
+        return self.proposition_history[-limit:]
+    
     async def cleanup(self):
         """Cleanup resources."""
         await self.client.aclose()
@@ -252,14 +318,30 @@ class OrchestratorIntegration:
         self.engine = OrchestrationEngine()
     
     async def process_ci_failure(self, failure_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Process CI failure with predictive actions."""
+        """Process CI failure with predictive propositions."""
         alert = Alert(
-            id=failure_data.get("id", "unknown"),
+            id=failure_data.get("id", str(uuid.uuid4())),
             type=AlertType.CI_FAILURE,
             description=failure_data.get("description", ""),
             severity=failure_data.get("severity", "medium"),
-            timestamp=failure_data.get("timestamp", ""),
+            timestamp=failure_data.get("timestamp", datetime.utcnow().isoformat()),
             source=failure_data.get("source", "ci_system"),
             metadata=failure_data.get("metadata", {})
+        )
+        return await self.engine.process_alert(alert)
+    
+    async def process_security_incident(self, incident_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Process security incident (spam/scam) with predictive propositions."""
+        incident_type = incident_data.get("incident_type", "spam_incident")
+        alert_type = AlertType.SPAM_INCIDENT if incident_type == "spam_incident" else AlertType.SCAM_INCIDENT
+        
+        alert = Alert(
+            id=incident_data.get("id", str(uuid.uuid4())),
+            type=alert_type,
+            description=incident_data.get("description", ""),
+            severity=incident_data.get("severity", "high"),
+            timestamp=incident_data.get("timestamp", datetime.utcnow().isoformat()),
+            source=incident_data.get("source", "security_system"),
+            metadata=incident_data.get("metadata", {})
         )
         return await self.engine.process_alert(alert)
