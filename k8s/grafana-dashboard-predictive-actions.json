@@ -1,0 +1,111 @@
+{
+  "dashboard": {
+    "title": "Predictive Actions Performance",
+    "tags": ["predictive-actions", "ml-ranker"],
+    "timezone": "utc",
+    "panels": [
+      {
+        "title": "Action Recommendation Accuracy",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(action_recommendation_latency_ms_bucket[5m]))",
+            "legendFormat": "p95 latency"
+          }
+        ],
+        "type": "graph"
+      },
+      {
+        "title": "ML Model Accuracy",
+        "targets": [
+          {
+            "expr": "ml_model_accuracy",
+            "legendFormat": "Accuracy"
+          }
+        ],
+        "type": "gauge",
+        "thresholds": "0.70,0.85"
+      },
+      {
+        "title": "User Action Acceptance Rate",
+        "targets": [
+          {
+            "expr": "increase(action_accepted_total[1h]) / increase(action_shown_total[1h])",
+            "legendFormat": "Acceptance Rate"
+          }
+        ],
+        "type": "stat"
+      },
+      {
+        "title": "Alert Processing Rate",
+        "targets": [
+          {
+            "expr": "rate(alerts_processed_total[5m])",
+            "legendFormat": "Alerts/sec"
+          }
+        ],
+        "type": "graph"
+      },
+      {
+        "title": "Action Execution Success Rate",
+        "targets": [
+          {
+            "expr": "increase(action_executed_success[1h]) / increase(action_executed_total[1h])",
+            "legendFormat": "Success Rate"
+          }
+        ],
+        "type": "stat"
+      },
+      {
+        "title": "Feedback Buffer Status",
+        "targets": [
+          {
+            "expr": "feedback_buffer_size",
+            "legendFormat": "Buffer size"
+          }
+        ],
+        "type": "graph"
+      },
+      {
+        "title": "ML Model Training Status",
+        "targets": [
+          {
+            "expr": "ml_ranker_training_samples",
+            "legendFormat": "Training samples"
+          }
+        ],
+        "type": "stat"
+      },
+      {
+        "title": "Action Performance by Type",
+        "targets": [
+          {
+            "expr": "rate(action_executed_total{action_type=~\".*\"}[5m])",
+            "legendFormat": "{{ action_type }}"
+          }
+        ],
+        "type": "table"
+      }
+    ],
+    "refresh": "30s",
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "templating": {
+      "list": [
+        {
+          "name": "instance",
+          "type": "query",
+          "datasource": "Prometheus",
+          "query": "label_values(up, instance)"
+        },
+        {
+          "name": "namespace",
+          "type": "query",
+          "datasource": "Prometheus",
+          "query": "label_values(up, namespace)"
+        }
+      ]
+    }
+  }
+}
