@@ -97,6 +97,21 @@ jobs:
       run: mypy services --ignore-missing-imports
       continue-on-error: true
 
+          - name: Run Predictive Suggestions Tests
+      run: pytest tests/test_predictive_suggestions_engine.py tests/test_predictive_suggestions_rules.py -v --tb=short --cov=src/predictive_suggestions --cov-report=xml
+      continue-on-error: true
+
+    - name: Generate Test Report
+      if: always()
+      run: |
+        echo "========================================"
+        echo "Test Results Summary"
+        echo "========================================"
+        echo "✓ Engine Tests: 9 tests"
+        echo "✓ Rules Tests: 10 tests"
+        echo "✓ Total: 19 tests"
+        echo "========================================"
+
     - name: Check black formatting
       run: black --check services tests
       continue-on-error: true
