@@ -16,6 +16,7 @@ from enum import Enum
 import httpx
 from datetime import datetime
 import uuid
+from predictive_suggestions import SuggestionEngine
 
 logger = logging.getLogger(__name__)
 
@@ -258,6 +259,35 @@ class OrchestrationEngine:
         except Exception as e:
             logger.error(f"Error fetching predictive propositions: {e}")
             return []
+
+                    # Fallback to rule-based suggestions
+            try:
+                logger.info(f"Using fallback SuggestionEngine for alert {request_id}")
+                suggestion_engine = SuggestionEngine()
+                alert_text = f"{alert.type.value}: {alert.description}"
+                fallback_suggestions = suggestion_engine.generate_suggestions(
+                    alert_text=alert_text,
+                    alert_type=alert.type.value,
+                    confidence_threshold=0.7
+                )
+                # Convert Suggestion objects to PredictiveProposition
+                propositions = []
+                for suggestion in fallback_suggestions[:5]:  # limit to 5
+                    propositions.append(PredictiveProposition(
+                        id=str(uuid.uuid4()),
+                        type=suggestion.type.value,
+                        title=suggestion.title,
+                        description=suggestion.description,
+                        actions=suggestion.actions,
+                        confidence_score=suggestion.confidence,
+                        severity=suggestion.severity,
+                        source="rule_based_fallback"
+                    ))
+                logger.info(f"Fallback engine generated {len(propositions)} propositions")
+                return propositions
+            except Exception as fallback_error:
+                logger.error(f"Fallback SuggestionEngine failed: {fallback_error}")
+                return []
 
         async def _fetch_predictive_propositions_with_retry(
         self,
