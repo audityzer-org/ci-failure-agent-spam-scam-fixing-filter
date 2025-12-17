@@ -1,0 +1,123 @@
+groups:
+- name: anti-corruption-alerts
+  interval: 15s
+  rules:
+  
+  # Service Availability Alerts
+  - alert: AntiCorruptionServiceDown
+    expr: up{job="anti-corruption"} == 0
+    for: 2m
+    labels:
+      severity: critical
+      component: anti-corruption
+    annotations:
+      summary: "Anti-Corruption Service is DOWN"
+      description: "Service has been unavailable for more than 2 minutes"
+      dashboard: "http://grafana:3000/d/anti-corruption"
+
+  # High Error Rate
+  - alert: HighErrorRate
+    expr: |
+      (
+        sum(rate(http_requests_total{status=~"5.."}[5m])) by (job)
+        /
+        sum(rate(http_requests_total[5m])) by (job)
+      ) > 0.05
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High error rate detected"
+      description: "Error rate is {{ $value | humanizePercentage }} for {{ $labels.job }}"
+
+  # Latency Alert
+  - alert: HighLatency
+    expr: |
+      histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High API latency detected"
+      description: "P95 latency is {{ $value }}s"
+
+  # Memory Usage Alert
+  - alert: HighMemoryUsage
+    expr: |
+      (container_memory_working_set_bytes{pod=~"anti-corruption.*"}
+       / container_spec_memory_limit_bytes{pod=~"anti-corruption.*"}) > 0.8
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High memory usage"
+      description: "Memory usage is {{ $value | humanizePercentage }} for {{ $labels.pod }}"
+
+  # CPU Usage Alert
+  - alert: HighCPUUsage
+    expr: |
+      (rate(container_cpu_usage_seconds_total{pod=~"anti-corruption.*"}[5m])
+       / container_spec_cpu_quota{pod=~"anti-corruption.*"}) > 0.8
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High CPU usage"
+      description: "CPU usage is {{ $value | humanizePercentage }} for {{ $labels.pod }}"
+
+  # Database Connection Pool Exhaustion
+  - alert: DatabaseConnectionPoolExhaustion
+    expr: |
+      (postgres_stat_activity_count{job="anti-corruption-db"}
+       / postgres_settings_max_connections{job="anti-corruption-db"}) > 0.8
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Database connection pool nearly exhausted"
+      description: "{{ $value | humanizePercentage }} of connection pool is in use"
+
+  # Pod Restart Rate
+  - alert: HighPodRestartRate
+    expr: |
+      rate(kube_pod_container_status_restarts_total{pod=~"anti-corruption.*"}[1h]) > 0.1
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High pod restart rate"
+      description: "Pod {{ $labels.pod }} has restarted {{ $value }} times in the last hour"
+
+  # Disk Space Alert
+  - alert: LowDiskSpace
+    expr: |
+      (node_filesystem_avail_bytes{mountpoint="/"}
+       / node_filesystem_size_bytes{mountpoint="/"}) < 0.1
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Low disk space"
+      description: "Only {{ $value | humanizePercentage }} disk space available on {{ $labels.node }}"
+
+  # Network Errors
+  - alert: HighNetworkErrors
+    expr: |
+      rate(node_network_transmit_errs_total[5m]) > 0 OR
+      rate(node_network_receive_errs_total[5m]) > 0
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Network errors detected"
+      description: "Network errors on interface {{ $labels.device }} on node {{ $labels.node }}"
+
+  # Recording Rules for Performance
+  - record: job:http_requests:rate5m
+    expr: sum(rate(http_requests_total[5m])) by (job)
+
+  - record: job:http_request_duration_p95:rate5m
+    expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) by (job)
+
+  - record: job:http_request_duration_p99:rate5m
+    expr: histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m])) by (job)
