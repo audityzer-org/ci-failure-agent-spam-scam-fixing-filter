@@ -23,6 +23,8 @@ from .logging_pipeline import (
     MLRankingFeeder,
 )
 
+from . import request_handlers
+
 __version__ = "0.1.0"
 __author__ = "Audityzer DevOps Team"
 
@@ -41,4 +43,5 @@ __all__ = [
     "ProposalLogger",
     "PostgreSQLStorageBackend",
     "MLRankingFeeder",
+        "request_handlers",
 ]
