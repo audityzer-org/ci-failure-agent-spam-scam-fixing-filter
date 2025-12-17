@@ -10,6 +10,8 @@ import google.generativeai as genai
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+import redis
+from task_queue import TaskQueue, TaskPriority
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -78,6 +80,15 @@ class CIFailureAgent:
 
 agent = CIFailureAgent()
 
+# Initialize Redis and TaskQueue
+try:
+    redis_client = redis.Redis(host=os.getenv('REDIS_HOST', 'localhost'), port=int(os.getenv('REDIS_PORT', 6379)), decode_responses=True)
+    task_queue = TaskQueue(redis_client=redis_client, queue_name='ci-failure-analysis')
+    logger.info("TaskQueue initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize TaskQueue: {str(e)}")
+    task_queue = None
+
 @app.post("/analyze")
 async def analyze_ci_failure(request: FailureAnalysisRequest) -> Dict:
     """Endpoint to analyze CI/CD failures."""
@@ -116,6 +127,18 @@ def root():
         "docs": "/docs",
         "health": "/health"
     }
+    
+@app.get("/queue/stats")
+def get_queue_stats():
+    """Get task queue statistics."""
+    if not task_queue:
+        return {"status": "error", "message": "TaskQueue not initialized"}
+    try:
+        stats = task_queue.get_stats()
+        return {"status": "success", "stats": stats}
+    except Exception as e:
+        logger.error(f"Failed to get queue stats: {str(e)}")
+        return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
