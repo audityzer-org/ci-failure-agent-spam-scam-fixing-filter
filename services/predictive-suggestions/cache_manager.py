@@ -5,8 +5,7 @@ from typing import Any, Optional, Dict
 from datetime import datetime, timedelta
 import redis
 from redis.exceptions import RedisError, ConnectionError
-from config import config
-
+from .config import config
 logger = logging.getLogger(__name__)
 
 
