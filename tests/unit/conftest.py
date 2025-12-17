@@ -166,85 +166,51 @@ def pytest_configure(config):
     )
 
 
-# Mock validators for Pydantic models
+
+
+
+# Test data fixtures with valid data for validator models
 @pytest.fixture
-def mock_validators_module(monkeypatch):
-    """Mock the validators module to provide flexible Pydantic models."""
+def valid_prediction_request_data():
+    """Valid data for PredictionRequestValidator."""
+    return {
+        'failure_pattern': 'test failure pattern',
+        'historical_data': {'retry_count': 0, 'last_error': None},
+    }
+
+
+@pytest.fixture
+def valid_suggestion_response_data():
+    """Valid data for SuggestionResponseValidator with all required fields."""
     from datetime import datetime
-    from unittest.mock import MagicMock
-    
-    # Create mock validator classes that accept flexible input
-    class MockValidationResult:
-        def __init__(self, is_valid=True, errors=None):
-            self.is_valid = is_valid
-            self.errors = errors or []
-    
-    class MockPredictionRequestValidator:
-        def __init__(self, **kwargs):
-            self.failure_pattern = kwargs.get('failure_pattern', '')
-            self.historical_data = kwargs.get('historical_data', {})
-        
-        def validate(self, data):
-            return MockValidationResult(is_valid=True)
-    
-    class MockSuggestionResponseValidator:
-        def __init__(self, **kwargs):
-            self.suggestion_id = kwargs.get('suggestion_id', 'test-id')
-            self.prediction_confidence = kwargs.get('prediction_confidence', 0.5)
-            self.recommended_actions = kwargs.get('recommended_actions', [])
-            self.expected_impact = kwargs.get('expected_impact', 'MEDIUM')
-            self.preventive_measures = kwargs.get('preventive_measures', [])
-            self.created_at = kwargs.get('created_at', datetime.now())
-        
-        def validate(self, data):
-            return MockValidationResult(is_valid=True)
-    
-    class MockInputValidator:
-        def validate_string(self, value):
-            return MockValidationResult(is_valid=True)
-        
-        def validate_numeric(self, value):
-            return MockValidationResult(is_valid=True)
-        
-        def validate_list(self, value):
-            return MockValidationResult(is_valid=True)
-    
-    class MockParameterSanitizer:
-        def sanitize_string(self, value):
-            return str(value).strip()
-        
-        def sanitize_numeric(self, value):
-            try:
-                return float(value)
-            except:
-                return None
-        
-        def sanitize_email(self, value):
-            return str(value).lower()
-    
-    # Mock ImpactLevel enum
-    class MockImpactLevel:
-        LOW = 'low'
-        MEDIUM = 'medium'
-        HIGH = 'high'
-        CRITICAL = 'critical'
-    
-    # Monkeypatch the imports
-    validators_mock = MagicMock()
-    validators_mock.ValidationResult = MockValidationResult
-    validators_mock.PredictionRequestValidator = MockPredictionRequestValidator
-    validators_mock.SuggestionResponseValidator = MockSuggestionResponseValidator
-    validators_mock.InputValidator = MockInputValidator
-    validators_mock.ParameterSanitizer = MockParameterSanitizer
-    validators_mock.ImpactLevel = MockImpactLevel
-    
-    monkeypatch.setitem(sys.modules, 'services.predictive_suggestions.validators', validators_mock)
-    
-    return validators_mock
+    return {
+        'suggestion_id': 'test-suggestion-123',
+        'prediction_confidence': 0.85,
+        'recommended_actions': ['action1', 'action2'],
+        'expected_impact': 'HIGH',
+        'preventive_measures': ['measure1', 'measure2'],
+        'created_at': datetime.now(),
+    }
 
 
-# Pytest option to auto-use validators mock
-@pytest.fixture(autouse=True)
-def inject_validators_mock(mock_validators_module):
-    """Auto-inject validators mock for all tests."""
-    pass
+@pytest.fixture
+def valid_input_validation_data():
+    """Valid data for InputValidator tests."""
+    return {
+        'string_input': 'test string',
+        'numeric_input': 42,
+        'list_input': ['item1', 'item2'],
+    }
+
+
+@pytest.fixture
+def valid_sanitizer_data():
+    """Valid data for ParameterSanitizer tests."""
+    return {
+        'dirty_string': '  test with spaces  ',
+        'numeric_string': '123.45',
+        'email_string': 'TEST@EXAMPLE.COM',
+        'sql_injection': "'; DROP TABLE; --",
+        'xss_attempt': '<script>alert("xss")</script>',
+    }
+    }
