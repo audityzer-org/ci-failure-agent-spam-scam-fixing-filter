@@ -65,3 +65,8 @@ class Config:
 
 # Configuration instances
 config = Config.get_config()
+
+# Module-level get_config function for easy import
+def get_config() -> Config:
+    """Get the configuration instance."""
+    return config
