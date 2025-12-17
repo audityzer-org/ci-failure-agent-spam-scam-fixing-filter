@@ -1,0 +1,102 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: anti-corruption
+  namespace: argocd
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  
+  source:
+    repoURL: https://github.com/audityzer-org/ci-failure-agent-spam-scam-fixing-filter
+    targetRevision: main
+    path: helm
+    helm:
+      releaseName: anti-corruption
+      values: |
+        replicaCount: 3
+        image:
+          tag: latest
+      valuesObject:
+        replicaCount: 3
+  
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: production
+  
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allow:
+        empty: false
+    syncOptions:
+    - CreateNamespace=true
+    - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  
+  notification:
+    webhook:
+      enabled: true
+      endpoints:
+      - name: slack
+        url: https://hooks.slack.com/services/WEBHOOK/PATH
+      - name: github
+        url: https://api.github.com/repos/audityzer-org/ci-failure-agent-spam-scam-fixing-filter/deployments
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-notifications-cm
+  namespace: argocd
+data:
+  service.slack: |
+    token: $slack-token
+  template.app-sync-succeeded: |
+    message: Application {{.app.metadata.name}} sync succeeded
+    slack:
+      attachments: |
+        [
+          {
+            "color": "#18be52",
+            "title": "{{ .app.metadata.name }} sync succeeded",
+            "title_link": "{{ .app.status.operationState.finishedAt }}",
+            "text": "Revision: {{.app.status.sync.revision}}"
+          }
+        ]
+  trigger.on-sync-succeeded: |
+    - when: app.status.operationState.phase in ['Succeeded'] and app.status.operationState.finishedAt == nil
+      oncePer: app.status.operationState.startedAt
+      send: [app-sync-succeeded]
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: anti-corruption-project
+  namespace: argocd
+spec:
+  sourceRepos:
+  - 'https://github.com/audityzer-org/*'
+  destinations:
+  - namespace: 'production'
+    server: https://kubernetes.default.svc
+  - namespace: 'staging'
+    server: https://kubernetes.default.svc
+  clusterResourceBlacklist:
+  - group: ''
+    kind: ResourceQuota
+  - group: ''
+    kind: LimitRange
+  namespaceResourceBlacklist:
+  - group: 'apps'
+    kind: Deployment
+  orphanedResources:
+    warn: false
