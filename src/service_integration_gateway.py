@@ -24,6 +24,7 @@ from enum import Enum
 from dataclasses import dataclass, asdict
 import httpx
 import redis.asyncio as redis
+from task_queue import TaskQueue, TaskPriority, TaskStatus
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends
 from pydantic import BaseModel, Field
 from circuitbreaker import circuit
@@ -234,6 +235,8 @@ async def startup_event():
     redis_client = await redis.from_url(redis_url)
     service_registry = ServiceRegistry(redis_client)
     event_orchestrator = EventOrchestrator(redis_client, service_registry)
+        task_queue = TaskQueue(redis_client=redis_client, queue_name='service-integration')
+    logger.info("TaskQueue initialized for service integration")
     
     # Register all services
     services = [
