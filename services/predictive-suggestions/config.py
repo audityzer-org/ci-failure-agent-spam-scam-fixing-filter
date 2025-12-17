@@ -57,6 +57,43 @@ class Config:
     HIGH_CONFIDENCE_THRESHOLD = int(os.getenv("HIGH_CONFIDENCE_THRESHOLD", "75"))
     MEDIUM_CONFIDENCE_THRESHOLD = int(os.getenv("MEDIUM_CONFIDENCE_THRESHOLD", "50"))
     
+
+        # Lowercase property accessors for compatibility
+    @property
+    def environment(self):
+        """Get environment as lowercase accessor."""
+        return self.ENV
+    
+    @property
+    def database_url(self):
+        """Get database URL as lowercase accessor."""
+        return self.DATABASE_URL
+    
+    @property
+    def redis_url(self):
+        """Get Redis URL as lowercase accessor."""
+        return self.REDIS_URL
+    
+    @property
+    def google_api_key(self):
+        """Get Google API key as lowercase accessor."""
+        return self.GOOGLE_API_KEY
+    
+    @property
+    def api_timeout(self):
+        """Get API timeout as lowercase accessor."""
+        return self.REQUEST_TIMEOUT
+    
+    @property
+    def max_retries(self):
+        """Get max retries as lowercase accessor."""
+        return getattr(self, 'MAX_RETRIES', 3)  # Default fallback
+    
+    @property
+    def log_level(self):
+        """Get log level as lowercase accessor."""
+        return self.LOG_LEVEL
+    
     @classmethod
     def get_config(cls) -> "Config":
         """Get configuration based on environment."""
