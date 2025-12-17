@@ -4,8 +4,7 @@ import logging
 from typing import Optional, Dict, Any
 from datetime import datetime
 import asyncio
-from config import config
-
+from .config import config
 logger = logging.getLogger(__name__)
 
 
