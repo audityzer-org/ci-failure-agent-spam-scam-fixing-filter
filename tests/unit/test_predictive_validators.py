@@ -103,13 +103,9 @@ class TestSuggestionResponseValidator:
         assert validator is not None
         assert isinstance(validator, SuggestionResponseValidator)
 
-    def test_validate_valid_response(self, validator):
+    def test_validate_valid_response(self, validato, valid_suggestion_response_datar):
         """Test validation of valid response."""
-        valid_response = {
-            'suggestions': ['Fix dependency', 'Update cache'],
-            'confidence': 0.95,
-            'impact_level': 'HIGH',
-        }
+        valid_response = valid_suggestion_response_data
         result = validator.validate(valid_response)
         assert result is not None
 
@@ -121,11 +117,9 @@ class TestSuggestionResponseValidator:
         result = validator.validate(invalid_response)
         assert result is not None
 
-    def test_validate_missing_fields(self, validator):
+    def test_validate_missing_fields(self, validator, valid_suggestion_response_data):
         """Test validation with missing required fields."""
-        incomplete_response = {
-            'suggestions': [],
-        }
+        incomplete_response = valid_suggestion_response_data
         result = validator.validate(incomplete_response)
         assert result is not None
 
