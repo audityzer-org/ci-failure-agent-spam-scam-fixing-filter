@@ -213,4 +213,3 @@ def valid_sanitizer_data():
         'sql_injection': "'; DROP TABLE; --",
         'xss_attempt': '<script>alert("xss")</script>',
     }
-    }
